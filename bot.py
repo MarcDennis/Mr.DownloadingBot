@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# ---------- PATCH for Python 3.13 missing imghdr ----------
+# ---------- PATCHES for Python 3.13+ missing modules ----------
 import sys
+
+# 1. Patch for imghdr
 try:
     import imghdr
 except ImportError:
@@ -12,7 +14,24 @@ except ImportError:
         return None
     imghdr.what = what
     sys.modules['imghdr'] = imghdr
-# ----------------------------------------------------------
+
+# 2. Patch for pkg_resources (used by apscheduler)
+try:
+    import pkg_resources
+except ImportError:
+    from types import ModuleType
+    pkg_resources = ModuleType('pkg_resources')
+    def get_distribution(name):
+        class Dist:
+            version = "0.0.0"
+        return Dist()
+    def require(*args, **kwargs):
+        pass
+    pkg_resources.get_distribution = get_distribution
+    pkg_resources.require = require
+    pkg_resources.DistributionNotFound = Exception
+    sys.modules['pkg_resources'] = pkg_resources
+# --------------------------------------------------------------
 
 import os
 import json
@@ -62,13 +81,11 @@ def is_authorized(user_id: int) -> bool:
 
 def detect_platform_and_url(text: str):
     """Return (platform, url) if valid Instagram or YouTube link."""
-    # Instagram
     ig_pattern = r'(https?://(?:www\.)?instagram\.com/(?:p|reel|tv)/[a-zA-Z0-9_-]+)'
     ig_match = re.search(ig_pattern, text)
     if ig_match:
         return ('instagram', ig_match.group(0))
 
-    # YouTube
     yt_patterns = [
         r'(https?://(?:www\.)?youtube\.com/watch\?v=[\w-]+)',
         r'(https?://youtu\.be/[\w-]+)',
@@ -134,14 +151,14 @@ def start(update: Update, context: CallbackContext):
 
     if is_authorized(user_id):
         welcome_text = (
-            " *Welcome to MrDownloading Bot*\n"
-            " *Hmu Available for Downloading Audio or Video* "
-            " *Send me URL*\n"
-            " Fast • Private • Secure"
+            "🎵 *Welcome to MrDownloading Bot*\n\n"
+            "Hmu Available for Downloading Audio or Video\n\n"
+            "Send me any Instagram or YouTube link and I'll send you both files automatically.\n\n"
+            "Coded: @riyanshV"
         )
         update.message.reply_text(welcome_text, parse_mode='Markdown')
     else:
-        update.message.reply_text("⏳ You are not yet authorized. Request Sent to Owner.")
+        update.message.reply_text("⏳ You are not yet authorized. Request sent to owner.")
         keyboard = [
             [
                 InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
@@ -177,7 +194,6 @@ def handle_message(update: Update, context: CallbackContext):
         update.message.reply_text("❌ Please send a valid Instagram or YouTube URL.")
         return
 
-    # Acknowledge and start processing
     status_msg = update.message.reply_text(f"🔍 Detected {platform.upper()} link.\n⏳ Downloading audio and video... Please wait.")
 
     temp_dir = None
@@ -185,14 +201,11 @@ def handle_message(update: Update, context: CallbackContext):
     video_path = None
 
     try:
-        # Download audio first
         audio_path = download_media(url, 'audio')
         temp_dir = os.path.dirname(audio_path)
 
-        # Download video
         video_path = download_media(url, 'video')
 
-        # Send audio
         with open(audio_path, 'rb') as f:
             update.message.reply_audio(
                 audio=f,
@@ -200,7 +213,6 @@ def handle_message(update: Update, context: CallbackContext):
                 parse_mode='Markdown'
             )
 
-        # Send video
         with open(video_path, 'rb') as f:
             update.message.reply_video(
                 video=f,
@@ -208,7 +220,6 @@ def handle_message(update: Update, context: CallbackContext):
                 parse_mode='Markdown'
             )
 
-        # Delete status message
         context.bot.delete_message(chat_id=update.effective_chat.id, message_id=status_msg.message_id)
 
     except Exception as e:
@@ -220,7 +231,6 @@ def handle_message(update: Update, context: CallbackContext):
         except:
             pass
     finally:
-        # Cleanup temp files
         for f in [audio_path, video_path]:
             if f and os.path.exists(f):
                 os.remove(f)
@@ -235,7 +245,6 @@ def button_callback(update: Update, context: CallbackContext):
     query.answer()
     data = query.data
 
-    # Approval callbacks (owner only)
     if data.startswith("approve_") or data.startswith("decline_"):
         if query.from_user.id != OWNER_USER_ID:
             query.edit_message_text("⛔ You are not authorized.")
@@ -250,14 +259,14 @@ def button_callback(update: Update, context: CallbackContext):
                 try:
                     context.bot.send_message(
                         chat_id=user_id,
-                        text="🎉 *You have been approved!*\n• Start Again.",
+                        text="🎉 *You have been approved!*\n\nSend me an Instagram or YouTube link to get both audio and video.",
                         parse_mode='Markdown'
                     )
                 except Exception as e:
                     logger.warning(f"Could not notify user {user_id}: {e}")
             else:
                 query.edit_message_text(f"ℹ️ User `{user_id}` already authorized.")
-        else:  # decline
+        else:
             query.edit_message_text(f"❌ User `{user_id}` declined.", parse_mode='Markdown')
             try:
                 context.bot.send_message(
@@ -270,8 +279,6 @@ def button_callback(update: Update, context: CallbackContext):
 
 def error_handler(update: Update, context: CallbackContext):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
-
-# ===== MAIN =====
 
 def main():
     updater = Updater(BOT_TOKEN, use_context=True)
